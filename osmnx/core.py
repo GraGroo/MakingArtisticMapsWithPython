@@ -87,25 +87,26 @@ def save_to_cache(url, response_json):
     -------
     None
     """
-    if settings.use_cache:
-        if response_json is None:
-            log('Saved nothing to cache because response_json is None')
-        else:
-            # create the folder on the disk if it doesn't already exist
-            if not os.path.exists(settings.cache_folder):
-                os.makedirs(settings.cache_folder)
+    if not settings.use_cache:
+        return
+    if response_json is None:
+        log('Saved nothing to cache because response_json is None')
+    else:
+        # create the folder on the disk if it doesn't already exist
+        if not os.path.exists(settings.cache_folder):
+            os.makedirs(settings.cache_folder)
 
-            # hash the url (to make filename shorter than the often extremely
-            # long url)
-            filename = hashlib.md5(url.encode('utf-8')).hexdigest()
-            cache_path_filename = os.path.join(settings.cache_folder, os.extsep.join([filename, 'json']))
+        # hash the url (to make filename shorter than the often extremely
+        # long url)
+        filename = hashlib.md5(url.encode('utf-8')).hexdigest()
+        cache_path_filename = os.path.join(settings.cache_folder, os.extsep.join([filename, 'json']))
 
-            # dump to json, and save to file
-            json_str = make_str(json.dumps(response_json))
-            with io.open(cache_path_filename, 'w', encoding='utf-8') as cache_file:
-                cache_file.write(json_str)
+        # dump to json, and save to file
+        json_str = make_str(json.dumps(response_json))
+        with io.open(cache_path_filename, 'w', encoding='utf-8') as cache_file:
+            cache_file.write(json_str)
 
-            log('Saved response to cache file "{}"'.format(cache_path_filename))
+        log(f'Saved response to cache file "{cache_path_filename}"')
 
 
 def get_from_cache(url):
@@ -132,7 +133,10 @@ def get_from_cache(url):
         if os.path.isfile(cache_path_filename):
             with io.open(cache_path_filename, encoding='utf-8') as cache_file:
                 response_json = json.load(cache_file)
-            log('Retrieved response from cache file "{}" for URL "{}"'.format(cache_path_filename, url))
+            log(
+                f'Retrieved response from cache file "{cache_path_filename}" for URL "{url}"'
+            )
+
             return response_json
 
 
@@ -206,8 +210,6 @@ def get_pause_duration(recursive_delay=5, default_duration=10):
             pause_duration = math.ceil((utc_time - dt.datetime.utcnow()).total_seconds())
             pause_duration = max(pause_duration, 1)
 
-        # if first token is 'Currently', it is currently running a query so
-        # check back in recursive_delay seconds
         elif status_first_token == 'Currently':
             time.sleep(recursive_delay)
             pause_duration = get_pause_duration()
@@ -215,7 +217,7 @@ def get_pause_duration(recursive_delay=5, default_duration=10):
         else:
             # any other status is unrecognized - log an error and return default
             # duration
-            log('Unrecognized server status: "{}"'.format(status), level=lg.ERROR)
+            log(f'Unrecognized server status: "{status}"', level=lg.ERROR)
             return default_duration
 
     return pause_duration
@@ -250,7 +252,7 @@ def nominatim_request(params, type = "search", pause_duration=1, timeout=30, err
 
     # prepare the Nominatim API URL and see if request already exists in the
     # cache
-    url = settings.nominatim_endpoint.rstrip('/') + '/{}'.format(type)
+    url = settings.nominatim_endpoint.rstrip('/') + f'/{type}'
     prepared_url = requests.Request('GET', url, params=params).prepare().url
     cached_response_json = get_from_cache(prepared_url)
 
@@ -262,41 +264,46 @@ def nominatim_request(params, type = "search", pause_duration=1, timeout=30, err
         # new HTTP call
         return cached_response_json
 
-    else:
-        # if this URL is not already in the cache, pause, then request it
-        log('Pausing {:,.2f} seconds before making API GET request'.format(pause_duration))
-        time.sleep(pause_duration)
-        start_time = time.time()
-        log('Requesting {} with timeout={}'.format(prepared_url, timeout))
-        response = requests.get(url, params=params, timeout=timeout, headers=get_http_headers())
+    # if this URL is not already in the cache, pause, then request it
+    log('Pausing {:,.2f} seconds before making API GET request'.format(pause_duration))
+    time.sleep(pause_duration)
+    start_time = time.time()
+    log(f'Requesting {prepared_url} with timeout={timeout}')
+    response = requests.get(url, params=params, timeout=timeout, headers=get_http_headers())
 
-        # get the response size and the domain, log result
-        size_kb = len(response.content) / 1000.
-        domain = re.findall(r'(?s)//(.*?)/', url)[0]
-        log('Downloaded {:,.1f}KB from {} in {:,.2f} seconds'.format(size_kb, domain, time.time()-start_time))
+    # get the response size and the domain, log result
+    size_kb = len(response.content) / 1000.
+    domain = re.findall(r'(?s)//(.*?)/', url)[0]
+    log('Downloaded {:,.1f}KB from {} in {:,.2f} seconds'.format(size_kb, domain, time.time()-start_time))
 
-        try:
-            response_json = response.json()
-            save_to_cache(prepared_url, response_json)
-        except Exception:
+    try:
+        response_json = response.json()
+        save_to_cache(prepared_url, response_json)
+    except Exception:
             #429 is 'too many requests' and 504 is 'gateway timeout' from server
             # overload - handle these errors by recursively calling
             # nominatim_request until we get a valid response
-            if response.status_code in [429, 504]:
-                # pause for error_pause_duration seconds before re-trying request
-                log('Server at {} returned status code {} and no JSON data. Re-trying request in {:.2f} seconds.'.format(domain,
-                                                                                                                         response.status_code,
-                                                                                                                         error_pause_duration),
-                                                                                                                         level=lg.WARNING)
-                time.sleep(error_pause_duration)
-                response_json = nominatim_request(params=params, pause_duration=pause_duration, timeout=timeout)
+        if response.status_code in [429, 504]:
+            # pause for error_pause_duration seconds before re-trying request
+            log('Server at {} returned status code {} and no JSON data. Re-trying request in {:.2f} seconds.'.format(domain,
+                                                                                                                     response.status_code,
+                                                                                                                     error_pause_duration),
+                                                                                                                     level=lg.WARNING)
+            time.sleep(error_pause_duration)
+            response_json = nominatim_request(params=params, pause_duration=pause_duration, timeout=timeout)
 
-            # else, this was an unhandled status_code, throw an exception
-            else:
-                log('Server at {} returned status code {} and no JSON data'.format(domain, response.status_code), level=lg.ERROR)
-                raise Exception('Server returned no JSON data.\n{} {}\n{}'.format(response, response.reason, response.text))
+        else:
+            log(
+                f'Server at {domain} returned status code {response.status_code} and no JSON data',
+                level=lg.ERROR,
+            )
 
-        return response_json
+            raise Exception(
+                f'Server returned no JSON data.\n{response} {response.reason}\n{response.text}'
+            )
+
+
+    return response_json
 
 
 def overpass_request(data, pause_duration=None, timeout=180, error_pause_duration=None):
@@ -332,47 +339,52 @@ def overpass_request(data, pause_duration=None, timeout=180, error_pause_duratio
         # new HTTP call
         return cached_response_json
 
-    else:
-        # if this URL is not already in the cache, pause, then request it
-        if pause_duration is None:
-            this_pause_duration = get_pause_duration()
-        log('Pausing {:,.2f} seconds before making API POST request'.format(this_pause_duration))
-        time.sleep(this_pause_duration)
-        start_time = time.time()
-        log('Posting to {} with timeout={}, "{}"'.format(url, timeout, data))
-        response = requests.post(url, data=data, timeout=timeout, headers=get_http_headers())
+    # if this URL is not already in the cache, pause, then request it
+    if pause_duration is None:
+        this_pause_duration = get_pause_duration()
+    log('Pausing {:,.2f} seconds before making API POST request'.format(this_pause_duration))
+    time.sleep(this_pause_duration)
+    start_time = time.time()
+    log(f'Posting to {url} with timeout={timeout}, "{data}"')
+    response = requests.post(url, data=data, timeout=timeout, headers=get_http_headers())
 
-        # get the response size and the domain, log result
-        size_kb = len(response.content) / 1000.
-        domain = re.findall(r'(?s)//(.*?)/', url)[0]
-        log('Downloaded {:,.1f}KB from {} in {:,.2f} seconds'.format(size_kb, domain, time.time()-start_time))
+    # get the response size and the domain, log result
+    size_kb = len(response.content) / 1000.
+    domain = re.findall(r'(?s)//(.*?)/', url)[0]
+    log('Downloaded {:,.1f}KB from {} in {:,.2f} seconds'.format(size_kb, domain, time.time()-start_time))
 
-        try:
-            response_json = response.json()
-            if 'remark' in response_json:
-                log('Server remark: "{}"'.format(response_json['remark'], level=lg.WARNING))
-            save_to_cache(prepared_url, response_json)
-        except Exception:
+    try:
+        response_json = response.json()
+        if 'remark' in response_json:
+            log('Server remark: "{}"'.format(response_json['remark'], level=lg.WARNING))
+        save_to_cache(prepared_url, response_json)
+    except Exception:
             #429 is 'too many requests' and 504 is 'gateway timeout' from server
             # overload - handle these errors by recursively calling
             # overpass_request until we get a valid response
-            if response.status_code in [429, 504]:
-                # pause for error_pause_duration seconds before re-trying request
-                if error_pause_duration is None:
-                    error_pause_duration = get_pause_duration()
-                log('Server at {} returned status code {} and no JSON data. Re-trying request in {:.2f} seconds.'.format(domain,
-                                                                                                                         response.status_code,
-                                                                                                                         error_pause_duration),
-                                                                                                                         level=lg.WARNING)
-                time.sleep(error_pause_duration)
-                response_json = overpass_request(data=data, pause_duration=pause_duration, timeout=timeout)
+        if response.status_code in [429, 504]:
+            # pause for error_pause_duration seconds before re-trying request
+            if error_pause_duration is None:
+                error_pause_duration = get_pause_duration()
+            log('Server at {} returned status code {} and no JSON data. Re-trying request in {:.2f} seconds.'.format(domain,
+                                                                                                                     response.status_code,
+                                                                                                                     error_pause_duration),
+                                                                                                                     level=lg.WARNING)
+            time.sleep(error_pause_duration)
+            response_json = overpass_request(data=data, pause_duration=pause_duration, timeout=timeout)
 
-            # else, this was an unhandled status_code, throw an exception
-            else:
-                log('Server at {} returned status code {} and no JSON data'.format(domain, response.status_code), level=lg.ERROR)
-                raise Exception('Server returned no JSON data.\n{} {}\n{}'.format(response, response.reason, response.text))
+        else:
+            log(
+                f'Server at {domain} returned status code {response.status_code} and no JSON data',
+                level=lg.ERROR,
+            )
 
-        return response_json
+            raise Exception(
+                f'Server returned no JSON data.\n{response} {response.reason}\n{response.text}'
+            )
+
+
+    return response_json
 
 
 def osm_polygon_download(query, limit=1, polygon_geojson=1):
@@ -411,9 +423,7 @@ def osm_polygon_download(query, limit=1, polygon_geojson=1):
     else:
         raise TypeError('query must be a dict or a string')
 
-    # request the URL, return the JSON
-    response_json = nominatim_request(params=params, timeout=30)
-    return response_json
+    return nominatim_request(params=params, timeout=30)
 
 
 def gdf_from_place(query, gdf_name=None, which_result=1, buffer_dist=None):
@@ -437,11 +447,12 @@ def gdf_from_place(query, gdf_name=None, which_result=1, buffer_dist=None):
     GeoDataFrame
     """
     # if no gdf_name is passed, just use the query
-    assert (isinstance(query, dict) or isinstance(query, str)), 'query must be a dict or a string'
-    if (gdf_name is None) and isinstance(query, dict):
-        gdf_name = ', '.join(list(query.values()))
-    elif (gdf_name is None) and isinstance(query, str):
-        gdf_name = query
+    assert isinstance(query, (dict, str)), 'query must be a dict or a string'
+    if gdf_name is None:
+        if isinstance(query, dict):
+            gdf_name = ', '.join(list(query.values()))
+        elif isinstance(query, str):
+            gdf_name = query
 
     # get the data from OSM
     data = osm_polygon_download(query, limit=which_result)
@@ -462,7 +473,7 @@ def gdf_from_place(query, gdf_name=None, which_result=1, buffer_dist=None):
 
         # if we got an unexpected geometry type (like a point), log a warning
         if geometry['type'] not in ['Polygon', 'MultiPolygon']:
-            log('OSM returned a {} as the geometry.'.format(geometry['type']), level=lg.WARNING)
+            log(f"OSM returned a {geometry['type']} as the geometry.", level=lg.WARNING)
 
         # create the GeoDataFrame, name it, and set its original CRS to default_crs
         gdf = gpd.GeoDataFrame.from_features(features)
@@ -475,18 +486,22 @@ def gdf_from_place(query, gdf_name=None, which_result=1, buffer_dist=None):
             gdf_utm = project_gdf(gdf)
             gdf_utm['geometry'] = gdf_utm['geometry'].buffer(buffer_dist)
             gdf = project_gdf(gdf_utm, to_latlong=True)
-            log('Buffered the GeoDataFrame "{}" to {} meters'.format(gdf.gdf_name, buffer_dist))
+            log(f'Buffered the GeoDataFrame "{gdf.gdf_name}" to {buffer_dist} meters')
 
         # return the gdf
-        log('Created GeoDataFrame with {} row for query "{}"'.format(len(gdf), query))
-        return gdf
+        log(f'Created GeoDataFrame with {len(gdf)} row for query "{query}"')
     else:
         # if there was no data returned (or fewer results than which_result
         # specified)
-        log('OSM returned no results (or fewer than which_result) for query "{}"'.format(query), level=lg.WARNING)
+        log(
+            f'OSM returned no results (or fewer than which_result) for query "{query}"',
+            level=lg.WARNING,
+        )
+
         gdf = gpd.GeoDataFrame()
         gdf.gdf_name = gdf_name
-        return gdf
+
+    return gdf
 
 
 def gdf_from_places(queries, gdf_name='unnamed', buffer_dist=None):
@@ -519,7 +534,10 @@ def gdf_from_places(queries, gdf_name='unnamed', buffer_dist=None):
 
     # set the original CRS of the GeoDataFrame to default_crs, and return it
     gdf.crs = settings.default_crs
-    log('Finished creating GeoDataFrame with {} rows from {} queries'.format(len(gdf), len(queries)))
+    log(
+        f'Finished creating GeoDataFrame with {len(gdf)} rows from {len(queries)} queries'
+    )
+
     return gdf
 
 
@@ -537,54 +555,21 @@ def get_osm_filter(network_type):
     -------
     string
     """
-    filters = {}
+    filters = {
+        'drive': f'["area"!~"yes"]["highway"!~"cycleway|footway|path|pedestrian|steps|track|corridor|elevator|escalator|proposed|construction|bridleway|abandoned|platform|raceway|service"]["motor_vehicle"!~"no"]["motorcar"!~"no"]{settings.default_access}["service"!~"parking|parking_aisle|driveway|private|emergency_access"]',
+        'drive_service': f'["area"!~"yes"]["highway"!~"cycleway|footway|path|pedestrian|steps|track|corridor|elevator|escalator|proposed|construction|bridleway|abandoned|platform|raceway"]["motor_vehicle"!~"no"]["motorcar"!~"no"]{settings.default_access}["service"!~"parking|parking_aisle|private|emergency_access"]',
+        'walk': f'["area"!~"yes"]["highway"!~"cycleway|motor|proposed|construction|abandoned|platform|raceway"]["foot"!~"no"]["service"!~"private"]{settings.default_access}',
+        'bike': f'["area"!~"yes"]["highway"!~"footway|steps|corridor|elevator|escalator|motor|proposed|construction|abandoned|platform|raceway"]["bicycle"!~"no"]["service"!~"private"]{settings.default_access}',
+        'all': f'["area"!~"yes"]["highway"!~"proposed|construction|abandoned|platform|raceway"]["service"!~"private"]{settings.default_access}',
+        'all_private': '["area"!~"yes"]["highway"!~"proposed|construction|abandoned|platform|raceway"]',
+        'none': '',
+    }
 
-    # driving: filter out un-drivable roads, service roads, private ways, and
-    # anything specifying motor=no. also filter out any non-service roads that
-    # are tagged as providing parking, driveway, private, or emergency-access
-    # services
-    filters['drive'] = ('["area"!~"yes"]["highway"!~"cycleway|footway|path|pedestrian|steps|track|corridor|'
-                        'elevator|escalator|proposed|construction|bridleway|abandoned|platform|raceway|service"]'
-                        '["motor_vehicle"!~"no"]["motorcar"!~"no"]{}'
-                        '["service"!~"parking|parking_aisle|driveway|private|emergency_access"]').format(settings.default_access)
-
-    # drive+service: allow ways tagged 'service' but filter out certain types of
-    # service ways
-    filters['drive_service'] = ('["area"!~"yes"]["highway"!~"cycleway|footway|path|pedestrian|steps|track|corridor|'
-                                'elevator|escalator|proposed|construction|bridleway|abandoned|platform|raceway"]'
-                                '["motor_vehicle"!~"no"]["motorcar"!~"no"]{}'
-                                '["service"!~"parking|parking_aisle|private|emergency_access"]').format(settings.default_access)
-
-    # walking: filter out cycle ways, motor ways, private ways, and anything
-    # specifying foot=no. allow service roads, permitting things like parking
-    # lot lanes, alleys, etc that you *can* walk on even if they're not exactly
-    # pleasant walks. some cycleways may allow pedestrians, but this filter ignores
-    # such cycleways.
-    filters['walk'] = ('["area"!~"yes"]["highway"!~"cycleway|motor|proposed|construction|abandoned|platform|raceway"]'
-                       '["foot"!~"no"]["service"!~"private"]{}').format(settings.default_access)
-
-    # biking: filter out foot ways, motor ways, private ways, and anything
-    # specifying biking=no
-    filters['bike'] = ('["area"!~"yes"]["highway"!~"footway|steps|corridor|elevator|escalator|motor|proposed|'
-                       'construction|abandoned|platform|raceway"]'
-                       '["bicycle"!~"no"]["service"!~"private"]{}').format(settings.default_access)
-
-    # to download all ways, just filter out everything not currently in use or
-    # that is private-access only
-    filters['all'] = ('["area"!~"yes"]["highway"!~"proposed|construction|abandoned|platform|raceway"]'
-                      '["service"!~"private"]{}').format(settings.default_access)
-
-    # to download all ways, including private-access ones, just filter out
-    # everything not currently in use
-    filters['all_private'] = '["area"!~"yes"]["highway"!~"proposed|construction|abandoned|platform|raceway"]'
-
-    # no filter, needed for infrastructures other than "highway"
-    filters['none'] = ''
 
     if network_type in filters:
         osm_filter = filters[network_type]
     else:
-        raise UnknownNetworkType('unknown network_type "{}"'.format(network_type))
+        raise UnknownNetworkType(f'unknown network_type "{network_type}"')
 
     return osm_filter
 
@@ -636,28 +621,27 @@ def osm_net_download(polygon=None, north=None, south=None, east=None, west=None,
     # check if we're querying by polygon or by bounding box based on which
     # argument(s) where passed into this function
     by_poly = polygon is not None
-    by_bbox = not (north is None or south is None or east is None or west is None)
+    by_bbox = (
+        north is not None
+        and south is not None
+        and east is not None
+        and west is not None
+    )
+
     if not (by_poly or by_bbox):
         raise InsufficientNetworkQueryArguments(
             'You must pass a polygon or north, south, east, and west')
 
     # create a filter to exclude certain kinds of ways based on the requested
     # network_type
-    if custom_filter:
-        osm_filter = custom_filter
-    else:
-        osm_filter = get_osm_filter(network_type)
+    osm_filter = custom_filter or get_osm_filter(network_type)
     response_jsons = []
 
     # pass server memory allocation in bytes for the query to the API
     # if None, pass nothing so the server will use its default allocation size
     # otherwise, define the query's maxsize parameter value as whatever the
     # caller passed in
-    if memory is None:
-        maxsize = ''
-    else:
-        maxsize = '[maxsize:{}]'.format(memory)
-
+    maxsize = '' if memory is None else f'[maxsize:{memory}]'
     # define the query to send the API
     # specifying way["highway"] means that all ways returned must have a highway
     # key. the {filters} then remove ways by key/value. the '>' makes it recurse
@@ -674,6 +658,7 @@ def osm_net_download(polygon=None, north=None, south=None, east=None, west=None,
         log('Requesting network data within bounding box from API in {:,} request(s)'.format(len(geometry)))
         start_time = time.time()
 
+        query_template = '[out:json][timeout:{timeout}]{maxsize};({infrastructure}{filters}({south:.6f},{west:.6f},{north:.6f},{east:.6f});>;);out;'
         # loop through each polygon rectangle in the geometry (there will only
         # be one if original bbox didn't exceed max area size)
         for poly in geometry:
@@ -681,7 +666,6 @@ def osm_net_download(polygon=None, north=None, south=None, east=None, west=None,
             # decimal places (ie, ~100 mm) so URL strings aren't different
             # due to float rounding issues (for consistent caching)
             west, south, east, north = poly.bounds
-            query_template = '[out:json][timeout:{timeout}]{maxsize};({infrastructure}{filters}({south:.6f},{west:.6f},{north:.6f},{east:.6f});>;);out;'
             query_str = query_template.format(north=north, south=south,
                                               east=east, west=west,
                                               infrastructure=infrastructure,
@@ -691,7 +675,7 @@ def osm_net_download(polygon=None, north=None, south=None, east=None, west=None,
             response_jsons.append(response_json)
         log('Got all network data within bounding box from API in {:,} request(s) and {:,.2f} seconds'.format(len(geometry), time.time()-start_time))
 
-    elif by_poly:
+    else:
         # project to utm, divide polygon up into sub-polygons if area exceeds a
         # max size (in meters), project back to lat-long, then get a list of
         # polygon(s) exterior coordinates
@@ -702,10 +686,10 @@ def osm_net_download(polygon=None, north=None, south=None, east=None, west=None,
         log('Requesting network data within polygon from API in {:,} request(s)'.format(len(polygon_coord_strs)))
         start_time = time.time()
 
+        query_template = '[out:json][timeout:{timeout}]{maxsize};({infrastructure}{filters}(poly:"{polygon}");>;);out;'
         # pass each polygon exterior coordinates in the list to the API, one at
         # a time
         for polygon_coord_str in polygon_coord_strs:
-            query_template = '[out:json][timeout:{timeout}]{maxsize};({infrastructure}{filters}(poly:"{polygon}");>;);out;'
             query_str = query_template.format(polygon=polygon_coord_str, infrastructure=infrastructure, filters=osm_filter, timeout=timeout, maxsize=maxsize)
             response_json = overpass_request(data={'data':query_str}, timeout=timeout)
             response_jsons.append(response_json)
@@ -784,9 +768,9 @@ def get_polygons_coordinates(geometry):
     # convert the exterior coordinates of the polygon(s) to the string format
     # the API expects
     polygon_coord_strs = []
+    separator = ' '
     for coords in polygons_coords:
         s = ''
-        separator = ' '
         for coord in list(coords):
             # round floating point lats and longs to 6 decimal places (ie, ~100 mm),
             # so we can hash and cache strings consistently
@@ -810,10 +794,7 @@ def get_node(element):
     dict
     """
 
-    node = {}
-    node['y'] = element['lat']
-    node['x'] = element['lon']
-    node['osmid'] = element['id']
+    node = {'y': element['lat'], 'x': element['lon'], 'osmid': element['id']}
     if 'tags' in element:
         for useful_tag in settings.useful_tags_node:
             if useful_tag in element['tags']:
@@ -835,9 +816,7 @@ def get_path(element):
     dict
     """
 
-    path = {}
-    path['osmid'] = element['id']
-
+    path = {'osmid': element['id']}
     # remove any consecutive duplicate elements in the list of nodes
     grouped_list = groupby(element['nodes'])
     path['nodes'] = [group[0] for group in grouped_list]
@@ -1051,9 +1030,7 @@ def quadrat_cut_geometry(geometry, quadrat_width, min_num=3, buffer_amount=1e-9)
     buffer_size = quadrat_width * buffer_amount
     lines_buffered = [line.buffer(buffer_size) for line in lines]
     quadrats = unary_union(lines_buffered)
-    multipoly = geometry.difference(quadrats)
-
-    return multipoly
+    return geometry.difference(quadrats)
 
 
 def intersect_index_quadrats(gdf, geometry, quadrat_width=0.05, min_num=3, buffer_amount=1e-9):
@@ -1336,7 +1313,7 @@ def create_graph(response_jsons, name='unnamed', retain_all=False, bidirectional
     elements = []
     for response_json in response_jsons:
         elements.extend(response_json['elements'])
-    if len(elements) < 1:
+    if not elements:
         raise EmptyOverpassResponse('There are no data elements in the response JSON objects')
 
     # create the graph as a MultiDiGraph and set the original CRS to default_crs
@@ -1405,13 +1382,19 @@ def bbox_from_point(point, distance=1000, project_utm=False, return_crs=False):
 
     if project_utm:
         west, south, east, north = buffer_proj.bounds
-        log('Created bounding box {} meters in each direction from {} and projected it: {},{},{},{}'.format(distance, point, north, south, east, west))
+        log(
+            f'Created bounding box {distance} meters in each direction from {point} and projected it: {north},{south},{east},{west}'
+        )
+
     else:
         # if project_utm is False, project back to lat-long then get the
         # bounding coordinates
         buffer_latlong, _ = project_geometry(buffer_proj, crs=crs_proj, to_latlong=True)
         west, south, east, north = buffer_latlong.bounds
-        log('Created bounding box {} meters in each direction from {}: {},{},{},{}'.format(distance, point, north, south, east, west))
+        log(
+            f'Created bounding box {distance} meters in each direction from {point}: {north},{south},{east},{west}'
+        )
+
 
     if return_crs:
         return north, south, east, west, crs_proj
@@ -1675,10 +1658,7 @@ def graph_from_address(address, distance=1000, distance_type='bbox',
                          custom_filter=custom_filter)
     log('graph_from_address() returning graph with {:,} nodes and {:,} edges'.format(len(list(G.nodes())), len(list(G.edges()))))
 
-    if return_coords:
-        return G, point
-    else:
-        return G
+    return (G, point) if return_coords else G
 
 
 def graph_from_polygon(polygon, network_type='all_private', simplify=True,
@@ -1858,7 +1838,7 @@ def graph_from_place(query, network_type='all_private', simplify=True,
     """
 
     # create a GeoDataFrame with the spatial boundaries of the place(s)
-    if isinstance(query, str) or isinstance(query, dict):
+    if isinstance(query, (str, dict)):
         # if it is a string (place name) or dict (structured place query), then
         # it is a single place
         gdf_place = gdf_from_place(query, which_result=which_result, buffer_dist=buffer_dist)

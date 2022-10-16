@@ -67,7 +67,13 @@ def osm_footprints_download(polygon=None, north=None, south=None, east=None, wes
     # check if we're querying by polygon or by bounding box based on which
     # argument(s) where passed into this function
     by_poly = polygon is not None
-    by_bbox = not (north is None or south is None or east is None or west is None)
+    by_bbox = (
+        north is not None
+        and south is not None
+        and east is not None
+        and west is not None
+    )
+
     if not (by_poly or by_bbox):
         raise ValueError('You must pass a polygon or north, south, east, and west')
 
@@ -77,11 +83,7 @@ def osm_footprints_download(polygon=None, north=None, south=None, east=None, wes
     # if None, pass nothing so the server will use its default allocation size
     # otherwise, define the query's maxsize parameter value as whatever the
     # caller passed in
-    if memory is None:
-        maxsize = ''
-    else:
-        maxsize = '[maxsize:{}]'.format(memory)
-
+    maxsize = '' if memory is None else f'[maxsize:{memory}]'
     # define the query to send the API
     if by_bbox:
         # turn bbox into a polygon and project to local UTM
@@ -95,6 +97,11 @@ def osm_footprints_download(polygon=None, north=None, south=None, east=None, wes
         log('Requesting footprints data within bounding box from API in {:,} request(s)'.format(len(geometry)))
         start_time = time.time()
 
+        query_template = ('[out:json][timeout:{timeout}]{maxsize};'
+                          '((way["{footprint_type}"]({south:.8f},{west:.8f},{north:.8f},{east:.8f});'
+                          '(._;>;););'
+                          '(relation["{footprint_type}"]({south:.8f},{west:.8f},{north:.8f},{east:.8f});'
+                          '(._;>;);););out;')
         # loop through each polygon rectangle in the geometry (there will only
         # be one if original bbox didn't exceed max area size)
         for poly in geometry:
@@ -102,11 +109,6 @@ def osm_footprints_download(polygon=None, north=None, south=None, east=None, wes
             # decimal places (ie, within 1 mm) so URL strings aren't different
             # due to float rounding issues (for consistent caching)
             west, south, east, north = poly.bounds
-            query_template = ('[out:json][timeout:{timeout}]{maxsize};'
-                              '((way["{footprint_type}"]({south:.8f},{west:.8f},{north:.8f},{east:.8f});'
-                              '(._;>;););'
-                              '(relation["{footprint_type}"]({south:.8f},{west:.8f},{north:.8f},{east:.8f});'
-                              '(._;>;);););out;')
             query_str = query_template.format(north=north, south=south, east=east, west=west, timeout=timeout,
                                               maxsize=maxsize, footprint_type=footprint_type)
             response_json = overpass_request(data={'data':query_str}, timeout=timeout)
@@ -115,7 +117,7 @@ def osm_footprints_download(polygon=None, north=None, south=None, east=None, wes
                'API in {:,} request(s) and {:,.2f} seconds')
         log(msg.format(len(geometry), time.time()-start_time))
 
-    elif by_poly:
+    else:
         # project to utm, divide polygon up into sub-polygons if area exceeds a
         # max size (in meters), project back to lat-long, then get a list of polygon(s) exterior coordinates
         geometry_proj, crs_proj = project_geometry(polygon)
@@ -125,12 +127,12 @@ def osm_footprints_download(polygon=None, north=None, south=None, east=None, wes
         log('Requesting footprint data within polygon from API in {:,} request(s)'.format(len(polygon_coord_strs)))
         start_time = time.time()
 
+        query_template = ('[out:json][timeout:{timeout}]{maxsize};('
+                          'way(poly:"{polygon}")["{footprint_type}"];(._;>;);'
+                          'relation(poly:"{polygon}")["{footprint_type}"];(._;>;););out;')
         # pass each polygon exterior coordinates in the list to the API, one at
         # a time
         for polygon_coord_str in polygon_coord_strs:
-            query_template = ('[out:json][timeout:{timeout}]{maxsize};('
-                              'way(poly:"{polygon}")["{footprint_type}"];(._;>;);'
-                              'relation(poly:"{polygon}")["{footprint_type}"];(._;>;););out;')
             query_str = query_template.format(polygon=polygon_coord_str, timeout=timeout, maxsize=maxsize,
                                               footprint_type=footprint_type)
             response_json = overpass_request(data={'data':query_str}, timeout=timeout)
@@ -185,7 +187,7 @@ def create_footprints_gdf(polygon=None, north=None, south=None, east=None, west=
     # create a complex Shapely Polygon or MultiPolygon for each relation
     for relation_key, relation_val in relations.items():
         relation_val['geometry'] = create_relation_geometry(relation_key, relation_val, footprints)
-    
+
     # merge relations into the footprints dictionary
     footprints.update(relations)
 
@@ -194,7 +196,7 @@ def create_footprints_gdf(polygon=None, north=None, south=None, east=None, west=
         try:
             del footprints[untagged_way]
         except KeyError:
-            log('untagged_way {} not found in footprints dict'.format(untagged_way))
+            log(f'untagged_way {untagged_way} not found in footprints dict')
 
     # Convert footprints dictionary to a GeoDataFrame
     gdf = gpd.GeoDataFrame.from_dict(footprints, orient='index')
@@ -206,7 +208,7 @@ def create_footprints_gdf(polygon=None, north=None, south=None, east=None, west=
         filter2 = (gdf['geometry'].geom_type == 'Polygon') | (gdf['geometry'].geom_type == 'MultiPolygon')
         filter_combined = filter1 & filter2
         gdf = gdf[filter_combined]
-    
+
     return gdf
 
 
@@ -257,7 +259,6 @@ def responses_to_dicts(responses, footprint_type):
             if 'type' in element and element['type']=='node':
                 vertices[element['id']] = {'lat' : element['lat'],
                                            'lon' : element['lon']}
-            # WAYS - both open and closed
             elif 'type' in element and element['type']=='way':
                 footprint = {'nodes' : element['nodes']}
                 if 'tags' in element:
@@ -267,7 +268,6 @@ def responses_to_dicts(responses, footprint_type):
                 # add ways not individually tagged with footprint_type to the untagged_footprints set
                 if ('tags' not in element) or (footprint_type not in element['tags']):
                     untagged_footprints.add(element['id'])
-            # RELATIONS
             elif 'type' in element and element['type']=='relation':
                 relation = {'members' : {}}
                 for member in element['members']:
@@ -280,9 +280,8 @@ def responses_to_dicts(responses, footprint_type):
                 # add relations not individually tagged with footprint_type to the untagged_footprints set
                 if ('tags' not in element) or (footprint_type not in element['tags']):
                     untagged_footprints.add(element['id'])
-            # Log any other Elements found in the response
             else:
-                log('Element {} is not a node, way or relation'.format(element['id']))
+                log(f"Element {element['id']} is not a node, way or relation")
 
     return vertices, footprints, relations, untagged_footprints
 
@@ -312,13 +311,12 @@ def create_footprint_geometry(footprint_key, footprint_val, vertices):
         try:
             footprint_geometry = Polygon([(vertices[node]['lon'], vertices[node]['lat']) for node in footprint_val['nodes']])
         except Exception:
-            log('Polygon has invalid geometry: {}'.format(footprint_key))
-    # OPEN WAYS    
+            log(f'Polygon has invalid geometry: {footprint_key}')
     else:
         try:
             footprint_geometry = LineString([(vertices[node]['lon'], vertices[node]['lat']) for node in footprint_val['nodes']])
         except Exception:
-            log('LineString has invalid geometry: {}'.format(footprint_key))
+            log(f'LineString has invalid geometry: {footprint_key}')
 
     return footprint_geometry
 
@@ -365,41 +363,40 @@ def create_relation_geometry(relation_key, relation_val, footprints):
 
     # add each members geometry to a list according to its role and geometry type
     for member_id, member_role in relation_val['members'].items():
-        if member_role == 'outer':
-            if footprints[member_id]['geometry'].geom_type == 'Polygon':
-                outer_polys.append(footprints[member_id]['geometry'])
-            elif footprints[member_id]['geometry'].geom_type == 'LineString':
-                outer_lines.append(footprints[member_id]['geometry'])
-        elif member_role == 'inner':
-            if footprints[member_id]['geometry'].geom_type == 'Polygon':
-                inner_polys.append(footprints[member_id]['geometry'])
-            elif footprints[member_id]['geometry'].geom_type == 'LineString':
+        if member_role == 'inner':
+            if footprints[member_id]['geometry'].geom_type == 'LineString':
                 inner_lines.append(footprints[member_id]['geometry'])
 
+            elif footprints[member_id]['geometry'].geom_type == 'Polygon':
+                inner_polys.append(footprints[member_id]['geometry'])
+        elif member_role == 'outer':
+            if footprints[member_id]['geometry'].geom_type == 'LineString':
+                outer_lines.append(footprints[member_id]['geometry'])
+            elif footprints[member_id]['geometry'].geom_type == 'Polygon':
+                outer_polys.append(footprints[member_id]['geometry'])
     # try to polygonize open outer ways and concatenate them to outer_polys
-    if len(outer_lines) > 0:
+    if outer_lines:
         try:
             result = list(polygonize(outer_lines))
         except Exception:
-            log("polygonize failed for 'outer' ways in relation: {}".format(relation_key))
+            log(f"polygonize failed for 'outer' ways in relation: {relation_key}")
         else:
             outer_polys += result
 
     # try to polygonize open inner ways and concatenate them to inner_polys
-    if len(inner_lines) > 0:
+    if inner_lines:
         try:
             result = list(polygonize(inner_lines))
         except Exception:
-            log("polygonize failed for 'inner' ways in relation: {}".format(relation_key))
+            log(f"polygonize failed for 'inner' ways in relation: {relation_key}")
         else:
             inner_polys += result
 
     # filter out relations missing both 'outer' and 'inner' polygons or just 'outer'
     if len(outer_polys + inner_polys) == 0:
-        log("Relation {} missing 'outer' and 'inner' closed ways".format(relation_key))
-    elif len(outer_polys) == 0:
-        log("Relation {} missing 'outer' closed ways".format(relation_key))
-    # process the others to multipolygons
+        log(f"Relation {relation_key} missing 'outer' and 'inner' closed ways")
+    elif not outer_polys:
+        log(f"Relation {relation_key} missing 'outer' closed ways")
     else:
         for outer_poly in outer_polys:
             temp_poly = outer_poly
@@ -414,7 +411,7 @@ def create_relation_geometry(relation_key, relation_val, footprints):
     elif len(multipoly) > 1:    
         return MultiPolygon(multipoly)
     else:
-        log('relation {} could not be converted to a complex footprint'.format(relation_key))
+        log(f'relation {relation_key} could not be converted to a complex footprint')
 
 
 def footprints_from_point(point, distance, footprint_type='building', retain_invalid=False):
@@ -579,8 +576,7 @@ def plot_footprints(gdf, fig=None, ax=None, figsize=None, color='#333333', bgcol
         if isinstance(geometry, Polygon):
             patches.append(PolygonPatch(geometry))
         elif isinstance(geometry, MultiPolygon):
-            for subpolygon in geometry: #if geometry is multipolygon, go through each constituent subpolygon
-                patches.append(PolygonPatch(subpolygon))
+            patches.extend(PolygonPatch(subpolygon) for subpolygon in geometry)
     pc = PatchCollection(patches, facecolor=color, edgecolor=color, linewidth=0, alpha=1)
     ax.add_collection(pc)
 

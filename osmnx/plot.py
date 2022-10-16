@@ -110,9 +110,11 @@ def rgb_color_list_to_hex(color_list):
     -------
     color_list_hex : list
     """
-    color_list_rgb = [[int(x*255) for x in c[0:3]] for c in color_list]
-    color_list_hex = ['#{:02X}{:02X}{:02X}'.format(rgb[0], rgb[1], rgb[2]) for rgb in color_list_rgb]
-    return color_list_hex
+    color_list_rgb = [[int(x*255) for x in c[:3]] for c in color_list]
+    return [
+        '#{:02X}{:02X}{:02X}'.format(rgb[0], rgb[1], rgb[2])
+        for rgb in color_list_rgb
+    ]
 
 
 def get_colors(n, cmap='viridis', start=0., stop=1., alpha=1., return_hex=False):
@@ -176,8 +178,7 @@ def get_node_colors_by_attr(G, attr, num_bins=None, cmap='viridis', start=0, sto
     attr_values = pd.Series([data[attr] for node, data in G.nodes(data=True)])
     cats = pd.qcut(x=attr_values, q=num_bins, labels=bin_labels)
     colors = get_colors(num_bins, cmap, start, stop)
-    node_colors = [colors[int(cat)] if pd.notnull(cat) else na_color for cat in cats]
-    return node_colors
+    return [colors[int(cat)] if pd.notnull(cat) else na_color for cat in cats]
 
 
 def get_edge_colors_by_attr(G, attr, num_bins=5, cmap='viridis', start=0, stop=1, na_color='none'):
@@ -211,8 +212,7 @@ def get_edge_colors_by_attr(G, attr, num_bins=5, cmap='viridis', start=0, stop=1
     attr_values = pd.Series([data[attr] for u, v, key, data in G.edges(keys=True, data=True)])
     cats = pd.qcut(x=attr_values, q=num_bins, labels=bin_labels)
     colors = get_colors(num_bins, cmap, start, stop)
-    edge_colors = [colors[int(cat)] if pd.notnull(cat) else na_color for cat in cats]
-    return edge_colors
+    return [colors[int(cat)] if pd.notnull(cat) else na_color for cat in cats]
 
 
 def save_and_show(fig, ax, save, show, close, filename, file_format, dpi, axis_off):
@@ -427,12 +427,10 @@ def plot_graph(G, bbox=None, fig_height=6, fig_width=None, margin=0.02,
         # make everything square
         ax.set_aspect('equal')
         fig.canvas.draw()
-    else:
-        # if the graph is not projected, conform the aspect ratio to not stretch the plot
-        if G.graph['crs'] == settings.default_crs:
-            coslat = np.cos((min(node_Ys) + max(node_Ys)) / 2. / 180. * np.pi)
-            ax.set_aspect(1. / coslat)
-            fig.canvas.draw()
+    elif G.graph['crs'] == settings.default_crs:
+        coslat = np.cos((min(node_Ys) + max(node_Ys)) / 2. / 180. * np.pi)
+        ax.set_aspect(1. / coslat)
+        fig.canvas.draw()
 
     # annotate the axis with node IDs if annotate=True
     if annotate:
@@ -589,11 +587,11 @@ def plot_graph_route(G, route, bbox=None, fig_height=6, fig_width=None,
                          edge_color=edge_color, edge_linewidth=edge_linewidth,
                          edge_alpha=edge_alpha, use_geom=use_geom)
 
-    # the origin and destination nodes are the first and last nodes in the route
-    origin_node = route[0]
-    destination_node = route[-1]
-
     if origin_point is None or destination_point is None:
+        # the origin and destination nodes are the first and last nodes in the route
+        origin_node = route[0]
+        destination_node = route[-1]
+
         # if caller didn't pass points, use the first and last node in route as
         # origin/destination
         origin_destination_lats = (G.nodes[origin_node]['y'], G.nodes[destination_node]['y'])
@@ -731,10 +729,13 @@ def plot_graph_routes(G, routes, bbox=None, fig_height=6, fig_width=None,
         for route in routes:
             origin_node = route[0]
             destination_node = route[-1]
-            orig_dest_points_lats.append(G.nodes[origin_node]['y'])
-            orig_dest_points_lats.append(G.nodes[destination_node]['y'])
-            orig_dest_points_lons.append(G.nodes[origin_node]['x'])
-            orig_dest_points_lons.append(G.nodes[destination_node]['x'])
+            orig_dest_points_lats.extend(
+                (G.nodes[origin_node]['y'], G.nodes[destination_node]['y'])
+            )
+
+            orig_dest_points_lons.extend(
+                (G.nodes[origin_node]['x'], G.nodes[destination_node]['x'])
+            )
 
     else:
         # otherwise, use the passed points as origin/destination points
@@ -792,7 +793,7 @@ def make_folium_polyline(edge, edge_color, edge_width, edge_opacity, popup_attri
     # locations is a list of points for the polyline
     # folium takes coords in lat,lon but geopandas provides them in lon,lat
     # so we have to flip them around
-    locations = list([(lat, lon) for lon, lat in edge['geometry'].coords])
+    locations = [(lat, lon) for lon, lat in edge['geometry'].coords]
 
     # if popup_attribute is None, then create no pop-up
     if popup_attribute is None:
@@ -803,10 +804,13 @@ def make_folium_polyline(edge, edge_color, edge_width, edge_opacity, popup_attri
         popup_text = json.dumps(edge[popup_attribute])
         popup = folium.Popup(html=popup_text)
 
-    # create a folium polyline with attributes
-    pl = folium.PolyLine(locations=locations, popup=popup,
-                         color=edge_color, weight=edge_width, opacity=edge_opacity)
-    return pl
+    return folium.PolyLine(
+        locations=locations,
+        popup=popup,
+        color=edge_color,
+        weight=edge_width,
+        opacity=edge_opacity,
+    )
 
 
 def plot_graph_folium(G, graph_map=None, popup_attribute=None,
@@ -1049,11 +1053,9 @@ def plot_figure_ground(G=None, address=None, point=None, dist=805,
         for node in G_undir.nodes():
             # first, identify all the highway types of this node's incident edges
             incident_edges_data = [G_undir.get_edge_data(node, neighbor) for neighbor in G_undir.neighbors(node)]
-            edge_types = [data[0]['highway'] for data in incident_edges_data]
-            if len(edge_types) < 1:
-                # if node has no incident edges, make size zero
-                node_widths[node] = 0
-            else:
+            if edge_types := [
+                data[0]['highway'] for data in incident_edges_data
+            ]:
                 # flatten the list of edge types
                 edge_types_flat = []
                 for et in edge_types:
@@ -1075,6 +1077,9 @@ def plot_figure_ground(G=None, address=None, point=None, dist=805,
                 circle_area = circle_diameter ** 2
                 node_widths[node] = circle_area
 
+            else:
+                # if node has no incident edges, make size zero
+                node_widths[node] = 0
         # assign the node size to each node in the graph
         node_sizes = [node_widths[node] for node in G_undir.nodes()]
     else:
@@ -1086,7 +1091,7 @@ def plot_figure_ground(G=None, address=None, point=None, dist=805,
 
     # create a filename if one was not passed
     if filename is None and save:
-        filename = 'figure_ground_{}_{}'.format(point, network_type)
+        filename = f'figure_ground_{point}_{network_type}'
 
     # plot the figure
     fig, ax = plot_graph(G_undir, bbox=bbox, fig_height=fig_length,

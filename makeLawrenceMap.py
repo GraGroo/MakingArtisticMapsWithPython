@@ -195,13 +195,13 @@ def expand(image, fill = '#e0474c', bottom = 50, left = None, right = None, top 
     """
     
     
-    if left == None:
+    if left is None:
         left = 0
-    if right == None:
+    if right is None:
         right = 0
-    if top == None:
+    if top is None:
         top = 0
-        
+
     width = left + image.size[0] + right
     height = top + image.size[1] + bottom
     out = Image.new(image.mode, (width, height), _color(fill, image.mode))
@@ -231,13 +231,13 @@ def add_border(input_image, output_image, fill = '#e0474c', bottom = 50, left = 
     """
     
     
-    if left == None:
+    if left is None:
         left = 0
-    if right == None:
+    if right is None:
         right = 0
-    if top == None:
+    if top is None:
         top = 0
-        
+
     img = Image.open(input_image)
     bimg = expand(img, bottom = bottom, left = left, right = right, top = top, fill= '#e0474c')
     bimg.save(output_image)

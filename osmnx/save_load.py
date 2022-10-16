@@ -53,7 +53,7 @@ def save_gdf_shapefile(gdf, filename=None, folder=None):
     folder_path = os.path.join(folder, filename)
 
     # make everything but geometry column a string
-    for col in [c for c in gdf.columns if not c == 'geometry']:
+    for col in [c for c in gdf.columns if c != 'geometry']:
         gdf[col] = gdf[col].fillna('').map(make_str)
 
     # if the save folder does not already exist, create it with a filename
@@ -64,7 +64,7 @@ def save_gdf_shapefile(gdf, filename=None, folder=None):
 
     if not hasattr(gdf, 'gdf_name'):
         gdf.gdf_name = 'unnamed'
-    log('Saved the GeoDataFrame "{}" as shapefile "{}"'.format(gdf.gdf_name, folder_path))
+    log(f'Saved the GeoDataFrame "{gdf.gdf_name}" as shapefile "{folder_path}"')
 
 
 def save_graph_shapefile(G, filename='graph', folder=None, encoding='utf-8'):
@@ -103,7 +103,7 @@ def save_graph_shapefile(G, filename='graph', folder=None, encoding='utf-8'):
     gdf_nodes = gdf_nodes.drop(['x', 'y'], axis=1)
 
     # make everything but geometry column a string
-    for col in [c for c in gdf_nodes.columns if not c == 'geometry']:
+    for col in [c for c in gdf_nodes.columns if c != 'geometry']:
         gdf_nodes[col] = gdf_nodes[col].fillna('').map(make_str)
 
     # create a list to hold our edges, then loop through each edge in the graph
@@ -129,7 +129,7 @@ def save_graph_shapefile(G, filename='graph', folder=None, encoding='utf-8'):
     gdf_edges.crs = G_save.graph['crs']
 
     # make everything but geometry column a string
-    for col in [c for c in gdf_edges.columns if not c == 'geometry']:
+    for col in [c for c in gdf_edges.columns if c != 'geometry']:
         gdf_edges[col] = gdf_edges[col].fillna('').map(make_str)
 
     # if the save folder does not already exist, create it with a filename
@@ -139,8 +139,8 @@ def save_graph_shapefile(G, filename='graph', folder=None, encoding='utf-8'):
         os.makedirs(folder)
 
     # save the nodes and edges as separate ESRI shapefiles
-    gdf_nodes.to_file('{}/nodes'.format(folder), encoding=encoding)
-    gdf_edges.to_file('{}/edges'.format(folder), encoding=encoding)
+    gdf_nodes.to_file(f'{folder}/nodes', encoding=encoding)
+    gdf_edges.to_file(f'{folder}/edges', encoding=encoding)
     log('Saved graph "{}" to disk as shapefiles at "{}" in {:,.2f} seconds'.format(G_save.name, folder, time.time()-start_time))
 
 
@@ -412,28 +412,17 @@ def is_duplicate_edge(data, data_other):
     is_dupe : bool
     """
 
-    is_dupe = False
-
     # if either edge's OSM ID contains multiple values (due to simplification), we want
     # to compare as sets so they are order-invariant, otherwise uv does not match vu
     osmid = set(data['osmid']) if isinstance(data['osmid'], list) else data['osmid']
     osmid_other = set(data_other['osmid']) if isinstance(data_other['osmid'], list) else data_other['osmid']
 
-    if osmid == osmid_other:
-        # if they contain the same OSM ID or set of OSM IDs (due to simplification)
-        if ('geometry' in data) and ('geometry' in data_other):
-            # if both edges have a geometry attribute
-            if is_same_geometry(data['geometry'], data_other['geometry']):
-                # if their edge geometries have the same coordinates
-                is_dupe = True
-        elif ('geometry' in data) and ('geometry' in data_other):
-            # if neither edge has a geometry attribute
-            is_dupe = True
-        else:
-            # if one edge has geometry attribute but the other doesn't, keep it
-            pass
-
-    return is_dupe
+    return bool(
+        osmid == osmid_other
+        and ('geometry' in data)
+        and ('geometry' in data_other)
+        and is_same_geometry(data['geometry'], data_other['geometry'])
+    )
 
 
 def is_same_geometry(ls1, ls2):
@@ -507,12 +496,11 @@ def update_edge_keys(G):
             geom_pairs = [(group['geometry'].iloc[0], group['geometry'].iloc[1])]
 
         # for each pair of edges to compare
-        for geom1, geom2 in geom_pairs:
-            # if they don't have the same geometry, flag them as different streets
-            if not is_same_geometry(geom1, geom2):
-                # add edge uvk, but not edge vuk, otherwise we'll iterate both their keys
-                # and they'll still duplicate each other at the end of this process
-                different_streets.append((group['u'].iloc[0], group['v'].iloc[0], group['key'].iloc[0]))
+        different_streets.extend(
+            (group['u'].iloc[0], group['v'].iloc[0], group['key'].iloc[0])
+            for geom1, geom2 in geom_pairs
+            if not is_same_geometry(geom1, geom2)
+        )
 
     # for each unique different street, iterate its key + 1 so it's unique
     for u, v, k in set(different_streets):
@@ -573,13 +561,13 @@ def get_undirected(G):
     for u, v, key, data in H.edges(keys=True, data=True):
 
         # if we haven't already flagged this edge as a duplicate
-        if not (u, v, key) in duplicate_edges:
+        if (u, v, key) not in duplicate_edges:
 
             # look at every other edge between u and v, one at a time
             for key_other in H[u][v]:
 
                 # don't compare this edge to itself
-                if not key_other == key:
+                if key_other != key:
 
                     # compare the first edge's data to the second's to see if
                     # they are duplicates
@@ -632,7 +620,7 @@ def graph_to_gdfs(G, nodes=True, edges=True, node_geometry=True, fill_edge_geome
         if node_geometry:
             gdf_nodes['geometry'] = gdf_nodes.apply(lambda row: Point(row['x'], row['y']), axis=1)
         gdf_nodes.crs = G.graph['crs']
-        gdf_nodes.gdf_name = '{}_nodes'.format(G.graph['name'])
+        gdf_nodes.gdf_name = f"{G.graph['name']}_nodes"
 
         to_return.append(gdf_nodes)
         log('Created GeoDataFrame "{}" from graph in {:,.2f} seconds'.format(gdf_nodes.gdf_name, time.time()-start_time))
@@ -667,15 +655,12 @@ def graph_to_gdfs(G, nodes=True, edges=True, node_geometry=True, fill_edge_geome
         # create a GeoDataFrame from the list of edges and set the CRS
         gdf_edges = gpd.GeoDataFrame(edges)
         gdf_edges.crs = G.graph['crs']
-        gdf_edges.gdf_name = '{}_edges'.format(G.graph['name'])
+        gdf_edges.gdf_name = f"{G.graph['name']}_edges"
 
         to_return.append(gdf_edges)
         log('Created GeoDataFrame "{}" from graph in {:,.2f} seconds'.format(gdf_edges.gdf_name, time.time()-start_time))
 
-    if len(to_return) > 1:
-        return tuple(to_return)
-    else:
-        return to_return[0]
+    return tuple(to_return) if len(to_return) > 1 else to_return[0]
 
 
 def gdfs_to_graph(gdf_nodes, gdf_edges):
@@ -707,10 +692,13 @@ def gdfs_to_graph(gdf_nodes, gdf_edges):
     # add the edges and attributes that are not u, v, key (as they're added
     # separately) or null
     for _, row in gdf_edges.iterrows():
-        attrs = {}
-        for label, value in row.iteritems():
-            if (label not in ['u', 'v', 'key']) and (isinstance(value, list) or pd.notnull(value)):
-                attrs[label] = value
+        attrs = {
+            label: value
+            for label, value in row.iteritems()
+            if (label not in ['u', 'v', 'key'])
+            and (isinstance(value, list) or pd.notnull(value))
+        }
+
         G.add_edge(row['u'], row['v'], key=row['key'], **attrs)
 
     return G

@@ -234,8 +234,11 @@ def get_logger(level=None, name=None, filename=None):
     if not getattr(logger, 'handler_set', None):
 
         # get today's date and construct a log filename
-        todays_date = dt.datetime.today().strftime('%Y_%m_%d')
-        log_filename = os.path.join(settings.logs_folder, '{}_{}.log'.format(filename, todays_date))
+        todays_date = dt.datetime.now().strftime('%Y_%m_%d')
+        log_filename = os.path.join(
+            settings.logs_folder, f'{filename}_{todays_date}.log'
+        )
+
 
         # if the logs folder does not already exist, create it
         if not os.path.exists(settings.logs_folder):
@@ -347,18 +350,16 @@ def get_largest_component(G, strongly=False):
             msg = ('Graph was not connected, retained only the largest strongly '
                    'connected component ({:,} of {:,} total nodes) in {:.2f} seconds')
             log(msg.format(len(list(G.nodes())), original_len, time.time()-start_time))
-    else:
-        # if the graph is not connected retain only the largest weakly connected component
-        if not nx.is_weakly_connected(G):
+    elif not nx.is_weakly_connected(G):
 
-            # get all the weakly connected components in graph then identify the largest
-            wccs = nx.weakly_connected_components(G)
-            largest_wcc = max(wccs, key=len)
-            G = induce_subgraph(G, largest_wcc)
+        # get all the weakly connected components in graph then identify the largest
+        wccs = nx.weakly_connected_components(G)
+        largest_wcc = max(wccs, key=len)
+        G = induce_subgraph(G, largest_wcc)
 
-            msg = ('Graph was not connected, retained only the largest weakly '
-                   'connected component ({:,} of {:,} total nodes) in {:.2f} seconds')
-            log(msg.format(len(list(G.nodes())), original_len, time.time()-start_time))
+        msg = ('Graph was not connected, retained only the largest weakly '
+               'connected component ({:,} of {:,} total nodes) in {:.2f} seconds')
+        log(msg.format(len(list(G.nodes())), original_len, time.time()-start_time))
 
     return G
 
@@ -399,9 +400,7 @@ def great_circle_vec(lat1, lng1, lat2, lng2, earth_radius=6371009):
 
     arc = 2 * np.arcsin(np.sqrt(h))
 
-    # return distance in units of earth_radius
-    distance = arc * earth_radius
-    return distance
+    return arc * earth_radius
 
 
 
@@ -423,9 +422,7 @@ def euclidean_dist_vec(y1, x1, y2, x2):
         distance or vector of distances from (x1, y1) to (x2, y2) in graph units
     """
 
-    # euclid's formula
-    distance = ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
-    return distance
+    return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
 
 
 
@@ -792,7 +789,7 @@ def redistribute_vertices(geom, dist):
                  for part in geom]
         return type(geom)([p for p in parts if not p.is_empty])
     else:
-        raise ValueError('unhandled geometry {}'.format(geom.geom_type))
+        raise ValueError(f'unhandled geometry {geom.geom_type}')
 
 
 def get_bearing(origin_point, destination_point):
@@ -827,9 +824,7 @@ def get_bearing(origin_point, destination_point):
 
     # normalize initial bearing to 0 degrees to 360 degrees to get compass bearing
     initial_bearing = math.degrees(initial_bearing)
-    bearing = (initial_bearing + 360) % 360
-
-    return bearing
+    return (initial_bearing + 360) % 360
 
 
 
@@ -887,15 +882,13 @@ def geocode(query):
     response = requests.get(url, timeout=60)
     results = response.json()
 
-    # if results were returned, parse lat and long out of the result
-    if len(results) > 0 and 'lat' in results[0] and 'lon' in results[0]:
-        lat = float(results[0]['lat'])
-        lon = float(results[0]['lon'])
-        point = (lat, lon)
-        log('Geocoded "{}" to {}'.format(query, point))
-        return point
-    else:
-        raise Exception('Nominatim geocoder returned no results for query "{}"'.format(query))
+    if len(results) <= 0 or 'lat' not in results[0] or 'lon' not in results[0]:
+        raise Exception(f'Nominatim geocoder returned no results for query "{query}"')
+    lat = float(results[0]['lat'])
+    lon = float(results[0]['lon'])
+    point = (lat, lon)
+    log(f'Geocoded "{query}" to {point}')
+    return point
 
 
 
@@ -980,7 +973,7 @@ def count_streets_per_node(G, nodes=None):
     all_unique_edges = set(all_edges)
 
     # get all edges (including parallel edges) that are not self-loops
-    non_self_loop_edges = [e for e in all_edges if not e[0]==e[1]]
+    non_self_loop_edges = [e for e in all_edges if e[0] != e[1]]
 
     # get a single copy of each self-loop edge (ie, if it's bi-directional, we
     # ignore the parallel edge going the reverse direction and keep only one
@@ -1027,14 +1020,12 @@ def round_polygon_coords(p, precision):
     new_exterior = [[round(x, precision) for x in c] for c in p.exterior.coords]
 
     # round the coordinates of the (possibly multiple, possibly none) Polygon interior(s)
-    new_interiors = []
-    for interior in p.interiors:
-        new_interiors.append([[round(x, precision) for x in c] for c in interior.coords])
+    new_interiors = [
+        [[round(x, precision) for x in c] for c in interior.coords]
+        for interior in p.interiors
+    ]
 
-    # construct a new Polygon with the rounded coordinates
-    # buffer by zero to clean self-touching or self-crossing polygons
-    new_poly = Polygon(shell=new_exterior, holes=new_interiors).buffer(0)
-    return new_poly
+    return Polygon(shell=new_exterior, holes=new_interiors).buffer(0)
 
 
 
@@ -1174,7 +1165,9 @@ def round_shape_coords(shape, precision):
         return round_multipolygon_coords(shape, precision)
 
     else:
-        raise TypeError('cannot round coordinates of unhandled geometry type: {}'.format(type(shape)))
+        raise TypeError(
+            f'cannot round coordinates of unhandled geometry type: {type(shape)}'
+        )
 
 
 
@@ -1197,22 +1190,21 @@ class OSMContentHandler (xml.sax.handler.ContentHandler):
                 if k in ('version', 'generator')})
 
         elif name in ('node', 'way'):
-            self._element = dict(type=name, tags={}, nodes=[], **attrs)
-            self._element.update({k: float(attrs[k]) for k in attrs.keys()
-                if k in ('lat', 'lon')})
-            self._element.update({k: int(attrs[k]) for k in attrs.keys()
-                if k in ('id', 'uid', 'version', 'changeset')})
+            self._element = (
+                dict(type=name, tags={}, nodes=[], **attrs)
+                | {k: float(attrs[k]) for k in attrs.keys() if k in ('lat', 'lon')}
+                | {
+                    k: int(attrs[k])
+                    for k in attrs.keys()
+                    if k in ('id', 'uid', 'version', 'changeset')
+                }
+            )
 
         elif name == 'tag':
             self._element['tags'].update({attrs['k']: attrs['v']})
 
         elif name == 'nd':
             self._element['nodes'].append(int(attrs['ref']))
-
-        elif name == 'relation':
-            # Placeholder for future relation support.
-            # Look for nested members and tags.
-            pass
 
     def endElement(self, name):
         if name in ('node', 'way'):

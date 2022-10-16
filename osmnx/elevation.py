@@ -18,7 +18,7 @@ from .utils import log
 
 
 def add_node_elevations(G, api_key, max_locations_per_batch=350,
-                        pause_duration=0.02): # pragma: no cover
+                        pause_duration=0.02):    # pragma: no cover
     """
     Get the elevation (meters) of each node in the network and add it to the
     node as an attribute.
@@ -47,7 +47,10 @@ def add_node_elevations(G, api_key, max_locations_per_batch=350,
     # round coorindates to 5 decimal places (approx 1 meter) to be able to fit
     # in more locations per API call
     node_points = pd.Series({node:'{:.5f},{:.5f}'.format(data['y'], data['x']) for node, data in G.nodes(data=True)})
-    log('Requesting node elevations from the API in {} calls.'.format(math.ceil(len(node_points) / max_locations_per_batch)))
+    log(
+        f'Requesting node elevations from the API in {math.ceil(len(node_points) / max_locations_per_batch)} calls.'
+    )
+
 
     # break the series of coordinates into chunks of size max_locations_per_batch
     # API format is locations=lat,lng|lat,lng|lat,lng|lat,lng...
@@ -64,23 +67,29 @@ def add_node_elevations(G, api_key, max_locations_per_batch=350,
         else:
             try:
                 # request the elevations from the API
-                log('Requesting node elevations: {}'.format(url))
+                log(f'Requesting node elevations: {url}')
                 time.sleep(pause_duration)
                 response = requests.get(url)
                 response_json = response.json()
                 save_to_cache(url, response_json)
             except Exception as e:
                 log(e)
-                log('Server responded with {}: {}'.format(response.status_code, response.reason))
+                log(f'Server responded with {response.status_code}: {response.reason}')
 
         # append these elevation results to the list of all results
         results.extend(response_json['results'])
 
     # sanity check that all our vectors have the same number of elements
     if not (len(results) == len(G.nodes()) == len(node_points)):
-        raise Exception('Graph has {} nodes but we received {} results from the elevation API.'.format(len(G.nodes()), len(results)))
+        raise Exception(
+            f'Graph has {len(G.nodes())} nodes but we received {len(results)} results from the elevation API.'
+        )
+
     else:
-        log('Graph has {} nodes and we received {} results from the elevation API.'.format(len(G.nodes()), len(results)))
+        log(
+            f'Graph has {len(G.nodes())} nodes and we received {len(results)} results from the elevation API.'
+        )
+
 
     # add elevation as an attribute to the nodes
     df = pd.DataFrame(node_points, columns=['node_points'])

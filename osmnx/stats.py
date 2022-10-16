@@ -91,7 +91,6 @@ def basic_stats(G, area=None, clean_intersects=False, tolerance=15,
                 area in square kilometers
     """
 
-    sq_m_in_sq_km = 1e6 #there are 1 million sq meters in 1 sq km
     G_undirected = None
 
     # calculate the number of nodes, n, and the number of edges, m, in the graph
@@ -130,14 +129,17 @@ def basic_stats(G, area=None, clean_intersects=False, tolerance=15,
     streets_per_node_proportion = {num:count/n for num, count in streets_per_node_counts.items()}
 
     # calculate the total and average edge lengths
-    edge_length_total = sum([d['length'] for u, v, d in G.edges(data=True)])
+    edge_length_total = sum(d['length'] for u, v, d in G.edges(data=True))
     edge_length_avg = edge_length_total / m
 
     # calculate the total and average street segment lengths (so, edges without
     # double-counting two-way streets)
     if G_undirected is None:
         G_undirected = G.to_undirected(reciprocal=False)
-    street_length_total = sum([d['length'] for u, v, d in G_undirected.edges(data=True)])
+    street_length_total = sum(
+        d['length'] for u, v, d in G_undirected.edges(data=True)
+    )
+
     street_segments_count = len(list(G_undirected.edges(keys=True)))
     street_length_avg = street_length_total / street_segments_count
 
@@ -150,6 +152,7 @@ def basic_stats(G, area=None, clean_intersects=False, tolerance=15,
 
     # we can calculate density metrics only if area is not null
     if area is not None:
+        sq_m_in_sq_km = 1e6 #there are 1 million sq meters in 1 sq km
         area_km = area / sq_m_in_sq_km
 
         # calculate node density as nodes per sq km
@@ -207,30 +210,29 @@ def basic_stats(G, area=None, clean_intersects=False, tolerance=15,
     self_loops_count = len(self_loops)
     self_loop_proportion = self_loops_count / m
 
-    # assemble the results
-    stats = {'n':n,
-             'm':m,
-             'k_avg':k_avg,
-             'intersection_count':intersection_count,
-             'streets_per_node_avg':streets_per_node_avg,
-             'streets_per_node_counts':streets_per_node_counts,
-             'streets_per_node_proportion':streets_per_node_proportion,
-             'edge_length_total':edge_length_total,
-             'edge_length_avg':edge_length_avg,
-             'street_length_total':street_length_total,
-             'street_length_avg':street_length_avg,
-             'street_segments_count':street_segments_count,
-             'node_density_km':node_density_km,
-             'intersection_density_km':intersection_density_km,
-             'edge_density_km':edge_density_km,
-             'street_density_km':street_density_km,
-             'circuity_avg':circuity_avg,
-             'self_loop_proportion':self_loop_proportion,
-             'clean_intersection_count':clean_intersection_count,
-             'clean_intersection_density_km':clean_intersection_density_km}
-
     # return the results
-    return stats
+    return {
+        'n': n,
+        'm': m,
+        'k_avg': k_avg,
+        'intersection_count': intersection_count,
+        'streets_per_node_avg': streets_per_node_avg,
+        'streets_per_node_counts': streets_per_node_counts,
+        'streets_per_node_proportion': streets_per_node_proportion,
+        'edge_length_total': edge_length_total,
+        'edge_length_avg': edge_length_avg,
+        'street_length_total': street_length_total,
+        'street_length_avg': street_length_avg,
+        'street_segments_count': street_segments_count,
+        'node_density_km': node_density_km,
+        'intersection_density_km': intersection_density_km,
+        'edge_density_km': edge_density_km,
+        'street_density_km': street_density_km,
+        'circuity_avg': circuity_avg,
+        'self_loop_proportion': self_loop_proportion,
+        'clean_intersection_count': clean_intersection_count,
+        'clean_intersection_density_km': clean_intersection_density_km,
+    }
 
 
 def extended_stats(G, connectivity=False, anc=False, ecc=False, bc=False, cc=False):
@@ -294,7 +296,6 @@ def extended_stats(G, connectivity=False, anc=False, ecc=False, bc=False, cc=Fal
 
     """
 
-    stats = {}
     full_start_time = time.time()
 
     # create a DiGraph from the MultiDiGraph, for those metrics that require it
@@ -310,8 +311,11 @@ def extended_stats(G, connectivity=False, anc=False, ecc=False, bc=False, cc=Fal
 
     # average degree of the neighborhood of each node, and average for the graph
     avg_neighbor_degree = nx.average_neighbor_degree(G)
-    stats['avg_neighbor_degree'] = avg_neighbor_degree
-    stats['avg_neighbor_degree_avg'] = sum(avg_neighbor_degree.values())/len(avg_neighbor_degree)
+    stats = {
+        'avg_neighbor_degree': avg_neighbor_degree,
+        'avg_neighbor_degree_avg': sum(avg_neighbor_degree.values())
+        / len(avg_neighbor_degree),
+    }
 
     # average weighted degree of the neighborhood of each node, and average for
     # the graph
