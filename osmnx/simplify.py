@@ -52,11 +52,10 @@ def is_endpoint(G, node, strict=True):
         # always an endpoint.
         return True
 
-    # if node has no incoming edges or no outgoing edges, it must be an endpoint
     elif G.out_degree(node)==0 or G.in_degree(node)==0:
         return True
 
-    elif not (n==2 and (d==2 or d==4)):
+    elif n != 2 or d not in [2, 4]:
         # else, if it does NOT have 2 neighbors AND either 2 or 4 directed
         # edges, it is an endpoint. either it has 1 or 3+ neighbors, in which
         # case it is a dead-end or an intersection of multiple streets or it has
@@ -71,14 +70,10 @@ def is_endpoint(G, node, strict=True):
 
         # add all the edge OSM IDs for incoming edges
         for u in G.predecessors(node):
-            for key in G[u][node]:
-                osmids.append(G.edges[u, node, key]['osmid'])
-
+            osmids.extend(G.edges[u, node, key]['osmid'] for key in G[u][node])
         # add all the edge OSM IDs for outgoing edges
         for v in G.successors(node):
-            for key in G[node][v]:
-                osmids.append(G.edges[node, v, key]['osmid'])
-
+            osmids.extend(G.edges[node, v, key]['osmid'] for key in G[node][v])
         # if there is more than 1 OSM ID in the list of edge OSM IDs then it is
         # an endpoint, if not, it isn't
         return len(set(osmids)) > 1
@@ -154,7 +149,7 @@ def get_paths_to_simplify(G, strict=True):
 
     # first identify all the nodes that are endpoints
     start_time = time.time()
-    endpoints = set([node for node in G.nodes() if is_endpoint(G, node, strict=strict)])
+    endpoints = {node for node in G.nodes() if is_endpoint(G, node, strict=strict)}
     log('Identified {:,} edge endpoints in {:,.2f} seconds'.format(len(endpoints), time.time()-start_time))
 
     start_time = time.time()
@@ -247,8 +242,12 @@ def simplify_graph(G, strict=True):
         for u, v in zip(path[:-1], path[1:]):
 
             # there shouldn't be multiple edges between interstitial nodes
-            if not G.number_of_edges(u, v) == 1:
-                log('Multiple edges between "{}" and "{}" found when simplifying'.format(u, v), level=lg.WARNING)
+            if G.number_of_edges(u, v) != 1:
+                log(
+                    f'Multiple edges between "{u}" and "{v}" found when simplifying',
+                    level=lg.WARNING,
+                )
+
 
             # the only element in this list as long as above check is True
             # (MultiGraphs use keys (the 0 here), indexed with ints from 0 and
@@ -266,11 +265,11 @@ def simplify_graph(G, strict=True):
 
         for key in edge_attributes:
             # don't touch the length attribute, we'll sum it at the end
-            if len(set(edge_attributes[key])) == 1 and not key == 'length':
+            if len(set(edge_attributes[key])) == 1 and key != 'length':
                 # if there's only 1 unique value in this attribute list,
                 # consolidate it to the single value (the zero-th)
                 edge_attributes[key] = edge_attributes[key][0]
-            elif not key == 'length':
+            elif key != 'length':
                 # otherwise, if there are multiple values, keep one of each value
                 edge_attributes[key] = list(set(edge_attributes[key]))
 
@@ -353,5 +352,4 @@ def clean_intersections(G, tolerance=15, dead_ends=False):
 
     # get the centroids of the merged intersection polygons
     unified_intersections = gpd.GeoSeries(list(buffered_nodes))
-    intersection_centroids = unified_intersections.centroid
-    return intersection_centroids
+    return unified_intersections.centroid

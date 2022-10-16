@@ -49,8 +49,16 @@ def parse_poi_query(north, south, east, west, amenities=None, timeout=180, maxsi
                           '({south:.6f},{west:.6f},{north:.6f},{east:.6f});(._;>;);););out;')
 
         # Parse amenties
-        query_str = query_template.format(amenities="|".join(amenities), north=north, south=south, east=east, west=west,
-                                          timeout=timeout, maxsize=maxsize)
+        return query_template.format(
+            amenities="|".join(amenities),
+            north=north,
+            south=south,
+            east=east,
+            west=west,
+            timeout=timeout,
+            maxsize=maxsize,
+        )
+
     else:
         # Overpass QL template
         query_template = ('[out:json][timeout:{timeout}]{maxsize};((node["amenity"]({south:.6f},'
@@ -59,10 +67,14 @@ def parse_poi_query(north, south, east, west, amenities=None, timeout=180, maxsi
                           '({south:.6f},{west:.6f},{north:.6f},{east:.6f});(._;>;);););out;')
 
         # Parse amenties
-        query_str = query_template.format(north=north, south=south, east=east, west=west,
-                                          timeout=timeout, maxsize=maxsize)
-
-    return query_str
+        return query_template.format(
+            north=north,
+            south=south,
+            east=east,
+            west=west,
+            timeout=timeout,
+            maxsize=maxsize,
+        )
 
 
 def osm_poi_download(polygon=None, amenities=None, north=None, south=None, east=None, west=None,
@@ -92,7 +104,12 @@ def osm_poi_download(polygon=None, amenities=None, north=None, south=None, east=
         # Parse the Overpass QL query
         query = parse_poi_query(amenities=amenities, west=west, south=south, east=east, north=north)
 
-    elif not (north is None or south is None or east is None or west is None):
+    elif (
+        north is not None
+        and south is not None
+        and east is not None
+        and west is not None
+    ):
         # TODO: Add functionality for subdividing search area geometry based on max_query_area_size
         # Parse Polygon from bbox
         #polygon = bbox_to_poly(north=north, south=south, east=east, west=west)
@@ -103,10 +120,7 @@ def osm_poi_download(polygon=None, amenities=None, north=None, south=None, east=
     else:
         raise ValueError('You must pass a polygon or north, south, east, and west')
 
-    # Get the POIs
-    responses = overpass_request(data={'data': query}, timeout=timeout)
-
-    return responses
+    return overpass_request(data={'data': query}, timeout=timeout)
 
 
 def parse_nodes_coords(osm_response):
@@ -126,12 +140,11 @@ def parse_nodes_coords(osm_response):
         dict of node IDs and their lat, lon coordinates
     """
 
-    coords = {}
-    for result in osm_response['elements']:
-        if 'type' in result and result['type'] == 'node':
-            coords[result['id']] = {'lat': result['lat'],
-                                    'lon': result['lon']}
-    return coords
+    return {
+        result['id']: {'lat': result['lat'], 'lon': result['lon']}
+        for result in osm_response['elements']
+        if 'type' in result and result['type'] == 'node'
+    }
 
 
 def parse_polygonal_poi(coords, response):
@@ -163,7 +176,7 @@ def parse_polygonal_poi(coords, response):
             return poi
 
         except Exception:
-            log('Polygon has invalid geometry: {}'.format(nodes))
+            log(f'Polygon has invalid geometry: {nodes}')
 
     return None
 
@@ -194,7 +207,7 @@ def parse_osm_node(response):
                 poi[tag] = response['tags'][tag]
 
     except Exception:
-        log('Point has invalid geometry: {}'.format(response['id']))
+        log(f"Point has invalid geometry: {response['id']}")
 
     return poi
 
@@ -217,8 +230,7 @@ def invalid_multipoly_handler(gdf, relation, way_ids):
 
     try:
         gdf_clean = gdf.dropna(subset=['geometry'])
-        multipoly = MultiPolygon(list(gdf_clean['geometry']))
-        return multipoly
+        return MultiPolygon(list(gdf_clean['geometry']))
 
     except Exception:
         log("Invalid geometry at relation id %s.\nWay-ids of the invalid MultiPolygon:" % (
@@ -281,7 +293,7 @@ def parse_osm_relations(relations, osm_way_df):
                     # Remove such 'ways' from 'osm_way_df' that are part of the 'relation'
                     osm_way_df = osm_way_df.drop(member_way_ids)
             except Exception:
-                log("Could not handle OSM 'relation': {}".format(relation['id']))
+                log(f"Could not handle OSM 'relation': {relation['id']}")
 
     # Merge 'osm_way_df' and the 'gdf_relations'
     osm_way_df = osm_way_df.append(gdf_relations, sort=False)
@@ -335,9 +347,7 @@ def create_poi_gdf(polygon=None, amenities=None, north=None, south=None, east=No
             # Add to 'pois'
             poi_nodes[result['id']] = poi
         elif result['type'] == 'way':
-            # Parse POI area Polygon
-            poi_area = parse_polygonal_poi(coords=coords, response=result)
-            if poi_area:
+            if poi_area := parse_polygonal_poi(coords=coords, response=result):
                 # Add element_type
                 poi_area['element_type'] = 'way'
                 # Add to 'poi_ways'
@@ -357,10 +367,7 @@ def create_poi_gdf(polygon=None, amenities=None, north=None, south=None, east=No
     # Parse relations (MultiPolygons) from 'ways'
     gdf_ways = parse_osm_relations(relations=relations, osm_way_df=gdf_ways)
 
-    # Combine GeoDataFrames
-    gdf = gdf_nodes.append(gdf_ways, sort=False)
-
-    return gdf
+    return gdf_nodes.append(gdf_ways, sort=False)
 
 
 def pois_from_point(point, distance=None, amenities=None):

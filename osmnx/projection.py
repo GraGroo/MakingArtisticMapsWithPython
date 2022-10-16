@@ -88,32 +88,30 @@ def project_gdf(gdf, to_crs=None, to_latlong=False):
     if to_crs is not None:
         projected_gdf = gdf.to_crs(to_crs)
 
-    # if to_crs was not passed-in, calculate the centroid of the geometry to
-    # determine UTM zone
+    elif to_latlong:
+        # if to_latlong is True, project the gdf to latlong
+        latlong_crs = settings.default_crs
+        projected_gdf = gdf.to_crs(latlong_crs)
+        log('Projected the GeoDataFrame "{}" to default_crs in {:,.2f} seconds'.format(gdf.gdf_name, time.time()-start_time))
     else:
-        if to_latlong:
-            # if to_latlong is True, project the gdf to latlong
-            latlong_crs = settings.default_crs
-            projected_gdf = gdf.to_crs(latlong_crs)
-            log('Projected the GeoDataFrame "{}" to default_crs in {:,.2f} seconds'.format(gdf.gdf_name, time.time()-start_time))
-        else:
-            # else, project the gdf to UTM
-            # if GeoDataFrame is already in UTM, just return it
-            if (gdf.crs is not None) and ('+proj=utm ' in gdf.crs):
-                return gdf
+        # else, project the gdf to UTM
+        # if GeoDataFrame is already in UTM, just return it
+        if (gdf.crs is not None) and ('+proj=utm ' in gdf.crs):
+            return gdf
 
-            # calculate the centroid of the union of all the geometries in the
-            # GeoDataFrame
-            avg_longitude = gdf['geometry'].unary_union.centroid.x
+        # calculate the centroid of the union of all the geometries in the
+        # GeoDataFrame
+        avg_longitude = gdf['geometry'].unary_union.centroid.x
 
-            # calculate the UTM zone from this avg longitude and define the UTM
-            # CRS to project
-            utm_zone = int(math.floor((avg_longitude + 180) / 6.) + 1)
-            utm_crs = '+proj=utm +zone={} +ellps=WGS84 +datum=WGS84 +units=m +no_defs'.format(utm_zone)
+        # calculate the UTM zone from this avg longitude and define the UTM
+        # CRS to project
+        utm_zone = int(math.floor((avg_longitude + 180) / 6.) + 1)
+        utm_crs = f'+proj=utm +zone={utm_zone} +ellps=WGS84 +datum=WGS84 +units=m +no_defs'
 
-            # project the GeoDataFrame to the UTM CRS
-            projected_gdf = gdf.to_crs(utm_crs)
-            log('Projected the GeoDataFrame "{}" to UTM-{} in {:,.2f} seconds'.format(gdf.gdf_name, utm_zone, time.time()-start_time))
+
+        # project the GeoDataFrame to the UTM CRS
+        projected_gdf = gdf.to_crs(utm_crs)
+        log('Projected the GeoDataFrame "{}" to UTM-{} in {:,.2f} seconds'.format(gdf.gdf_name, utm_zone, time.time()-start_time))
 
     projected_gdf.gdf_name = gdf.gdf_name
     return projected_gdf
@@ -143,7 +141,7 @@ def project_graph(G, to_crs=None):
     nodes, data = zip(*G_proj.nodes(data=True))
     gdf_nodes = gpd.GeoDataFrame(list(data), index=nodes)
     gdf_nodes.crs = G_proj.graph['crs']
-    gdf_nodes.gdf_name = '{}_nodes'.format(G_proj.name)
+    gdf_nodes.gdf_name = f'{G_proj.name}_nodes'
 
     # create new lat/lon columns just to save that data for later, and create a
     # geometry column from x/y
@@ -165,10 +163,10 @@ def project_graph(G, to_crs=None):
     # with a geometry attribute. geom attr only exists if graph has been
     # simplified, otherwise you don't have to project anything for the edges
     # because the nodes still contain all spatial data
-    if len(edges_with_geom) > 0:
+    if edges_with_geom:
         gdf_edges = gpd.GeoDataFrame(edges_with_geom)
         gdf_edges.crs = G_proj.graph['crs']
-        gdf_edges.gdf_name = '{}_edges'.format(G_proj.name)
+        gdf_edges.gdf_name = f'{G_proj.name}_edges'
         gdf_edges_utm = project_gdf(gdf_edges, to_crs=to_crs)
 
     # extract projected x and y values from the nodes' geometry column
@@ -203,7 +201,7 @@ def project_graph(G, to_crs=None):
     # set the graph's CRS attribute to the new, projected CRS and return the
     # projected graph
     G_proj.graph['crs'] = gdf_nodes_utm.crs
-    G_proj.graph['name'] = '{}_UTM'.format(graph_name)
+    G_proj.graph['name'] = f'{graph_name}_UTM'
     if 'streets_per_node' in G.graph:
         G_proj.graph['streets_per_node'] = G.graph['streets_per_node']
     log('Rebuilt projected graph in {:,.2f} seconds'.format(time.time()-start_time))
